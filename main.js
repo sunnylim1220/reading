@@ -20,10 +20,10 @@ let stylusTouchId=null;
 let lastStylusTouchAt=0;
 function isDrawingPointer(e){return e.pointerType==='pen'||e.pointerType==='mouse';}
 function stylusTouch(t){return t && (t.touchType==='stylus'||t.touchType==='pen');}
-function fakePointer(t,svg){return {pointerId:'stylus-touch',pointerType:'pen',clientX:t.clientX,clientY:t.clientY,currentTarget:svg,preventDefault(){}};}
+function fakePointer(t,svg){return {pointerId:'stylus-touch',pointerType:'pen',clientX:t.clientX,clientY:t.clientY,currentTarget:svg,preventDefault(){},setPointerCapture(){}};}
 function stopNative(e){if(e.cancelable)e.preventDefault();}
 function handleDown(e,side){
-  if(stylusTouchActive || (e.pointerType==='pen' && performance.now()-lastStylusTouchAt<150))return;
+  if(stylusTouchActive)return;
   if(tool==='scroll'||!isDrawingPointer(e)){
     if(e.pointerType==='touch'&&tool!=='scroll'){
       e.preventDefault();
@@ -37,7 +37,7 @@ function handleDown(e,side){
   down(e,side);
 }
 function handleMove(e,side){
-  if(stylusTouchActive)return;
+  if(stylusTouchActive && drawingPointer!==e.pointerId)return;
   const touch=touchScrolls.get(e.pointerId);
   if(touch){
     e.preventDefault();
@@ -50,7 +50,7 @@ function handleMove(e,side){
   e.preventDefault();move(e,side);
 }
 function handleUp(e){
-  if(stylusTouchActive)return;
+  if(stylusTouchActive && drawingPointer!==e.pointerId)return;
   if(touchScrolls.has(e.pointerId)){touchScrolls.delete(e.pointerId);return;}
   if(drawingPointer!==e.pointerId)return;
   drawingPointer=null;up();
@@ -72,10 +72,10 @@ function setupDraw(){for(const side of ['Left','Right']){
     const t=[...e.changedTouches].find(stylusTouch);
     if(!t)return;
     stopNative(e);
-    if(stylusTouchActive)return;
+    // Pointer Events are the primary Pencil path. Do not replace an active
+    // pointer stroke with a second Touch Events stroke (which made dots).
+    if(stylusTouchActive || drawingPointer!==null)return;
     stylusTouchActive=true;stylusTouchId=t.identifier;lastStylusTouchAt=performance.now();
-    // End any duplicate pointer-event stroke before starting touch fallback.
-    if(drawingPointer!==null){drawingPointer=null;up();}
     down(fakePointer(t,svg),side);
   },{passive:false});
   svg.addEventListener('touchmove',e=>{
@@ -94,7 +94,7 @@ function setupDraw(){for(const side of ['Left','Right']){
 
 }paint();}
 function point(e){const rect=e.currentTarget.getBoundingClientRect();return{x:e.clientX-rect.left,y:e.clientY-rect.top};}
-function down(e,side){if(tool==='scroll')return;e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);const p=point(e);if(tool==='laser'){laser={side,points:[{...p,t:performance.now()}],color:'#ff173c',width:4};startLaserAnimation();paint();return;}if(tool==='lasso'){const hit=[...selected].some(i=>strokes[i]?.side===side&&strokes[i].points.some(v=>Math.hypot(v.x-p.x,v.y-p.y)<18));if(hit){drag={side,last:p};return;}lasso={side,points:[p],color:'#2388f5',width:2};paint();return;}if(tool==='eraser'){erase(side,p);return;}active={side,points:[p],color:inkColor,width:tool==='highlighter'?highlightWidths[toolSizes.highlighter]:penWidths[toolSizes.pen],opacity:tool==='highlighter'?.35:1};paint();}
+function down(e,side){if(tool==='scroll')return;e.preventDefault();try{e.currentTarget.setPointerCapture?.(e.pointerId);}catch(_){}const p=point(e);if(tool==='laser'){laser={side,points:[{...p,t:performance.now()}],color:'#ff173c',width:4};startLaserAnimation();paint();return;}if(tool==='lasso'){const hit=[...selected].some(i=>strokes[i]?.side===side&&strokes[i].points.some(v=>Math.hypot(v.x-p.x,v.y-p.y)<18));if(hit){drag={side,last:p};return;}lasso={side,points:[p],color:'#2388f5',width:2};paint();return;}if(tool==='eraser'){erase(side,p);return;}active={side,points:[p],color:inkColor,width:tool==='highlighter'?highlightWidths[toolSizes.highlighter]:penWidths[toolSizes.pen],opacity:tool==='highlighter'?.35:1};paint();}
 function move(e,side){if(drag?.side===side){const p=point(e),dx=p.x-drag.last.x,dy=p.y-drag.last.y;selected.forEach(i=>{if(strokes[i]?.side===side)strokes[i].points.forEach(v=>{v.x+=dx;v.y+=dy;});});drag.last=p;paint();return;}if(tool==='eraser'&&e.buttons){erase(side,point(e));return;}const obj=laser||lasso||active;if(obj?.side===side){obj.points.push(obj===laser?{...point(e),t:performance.now()}:point(e));paint();}}
 function inside(p,poly){let hit=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){const a=poly[i],b=poly[j];if((a.y>p.y)!==(b.y>p.y)&&p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x)hit=!hit;}return hit;}
 function up(){if(active){strokes.push(active);active=null;undoStack=[];}if(lasso){selected=new Set(strokes.map((s,i)=>s.side===lasso.side&&s.points.some(p=>inside(p,lasso.points))?i:-1).filter(i=>i>=0));lasso=null;}if(laser){laserFrames.push(laser);laser=null;startLaserAnimation();}drag=null;paint();}
